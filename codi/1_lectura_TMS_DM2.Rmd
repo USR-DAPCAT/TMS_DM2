@@ -1,0 +1,324 @@
+---
+title: 'Mortalitat, grau de control i evolucio   de la diabetis mellitus tipus 2  en pacients amb  Trastorn Mental Sever.(TMS)'
+author: "Jordi Real & Rai Puig"
+website: "https://github.com/USR-DAPCAT/"
+
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+
+
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    fig_caption: true
+    css: logos_css/usr_styles.css
+  pdf_document: default
+  word_document: default
+
+params:
+  dir_dades_origen: "dades/mostra"   #"../../DADES/TMS_DM2/mostra" # "../DADES/EPIPEU_CAT3/dades/mostra"
+  dir_dades_desti: "dades/mostra" # dades/mostra"  # dades 
+---
+
+
+&nbsp;
+<script>
+   $(document).ready(function() {
+     $head = $('#header');
+     $head.prepend('<img src=\"https://www.idiapjgol.org/images/logo.png\" style=\"float: right ;width: 130px;\"/>')
+     $head.prepend('<img src=\"https://avatars2.githubusercontent.com/u/57066591?s=200&v=4\" style=\"margin-left:25% ;width: 80px;\"/>')
+     $head.prepend('<img src=\"logoDAP_Cat.png\" style=\"float: left:1;width: 185px;\"/>')
+   });
+</script>
+
+
+
+<div class="watermark">DRAFT</div>
+
+
+
+
+# FASE LECTURA
+
+>> Generacion de tabla plana y aplicacion de los primeros criterios inclusion 
+
+```{r setup, include = FALSE}
+#rm(list=ls())
+library(dplyr)
+
+# Funcions 
+link_source<-paste0("https://github.com/jrealgatius/Stat_codis/blob/master/funcions_propies.R","?raw=T")
+devtools::source_url(link_source)
+
+directori_dades_origen<-params$dir_dades_origen
+
+
+
+# "E:/Google Drive/CIBERDEM/DADES/epiDMGCAT"
+
+
+```
+## 1. Lectura 
+```{r lectura, include=T}
+# 1 Lectura -----------
+
+
+conductor_codis<-here::here("CATALEG_TMS.xlsx")
+dt_cataleg<-readxl::read_excel(conductor_codis,col_types = "text")
+
+
+#
+#15.vii.2021
+#i)
+dt_exploracions<-readRDS(here::here(directori_dades_origen,"exploracions.rds"))%>% as_tibble()
+
+#ii)
+dt_facturacions<-readRDS(here::here(directori_dades_origen,"facturacions.rds"))%>% as_tibble()
+
+#iii)
+dt_pacients<-readRDS(here::here(directori_dades_origen,"pacients.rds"))%>% as_tibble()
+
+#iv)
+dt_prescripcions<-readRDS(here::here(directori_dades_origen,"prescripcions.rds"))%>% as_tibble()
+
+#v)
+dt_problemes_salut<-
+  readRDS(here::here(directori_dades_origen,"problemes_salut.rds" ) )%>% as_tibble() %>%
+  select(idp=IDP,cod=GRUP_PS,dat=DALTA,dbaixa=DBAIXA)
+
+#vi)
+dt_variables<-readRDS(here::here(directori_dades_origen,"variables.rds"))%>% as_tibble()  
+
+#dt_pacients
+#dt_exploracions
+#dt_variables
+#dt_facturacions
+#dt_prescripcions
+#dt_problemes_salut
+
+
+```
+
+
+
+
+## 2. Agregacion de datos
+
+
+```{r genero_poblacio}
+
+# 2.1  Genero Poblacio ------------
+
+dt_poblacio<-dt_pacients%>% as_tibble()
+
+
+```
+
+```{r genero_dt_index}
+
+# 2.2 Genero Dia Index ------------
+
+
+
+crear_data_index<-function(taula=dt_INCLUSIONS,tall= "20091231",agr="agr_DM2",K="DM2") {
+  
+  #taula=dt_INCLUSIONS
+  #tall= "20091231"
+  #agr="agr_TMS"
+  #K="TMS"
+  
+  
+  dt<-agregar_problemes(select(taula,idp,cod,dat),
+                        bd.dindex = tall,
+                        dt.agregadors=select(dt_cataleg,cod,agr=!!agr),
+                        finestra.dies=c(-Inf,0),prefix = "DG.") %>%
+    
+                        select(idp ,dtindex,paste0("DG.",!!K))%>%
+                        select(idp,paste0("DG.",!!K))
+  
+  dt    
+
+  }
+
+
+#Pacients vius amb diagnòstic registrat de DM2, >18 anys, a 1/12007 , o entre els registres entre els anys 2007-2009.
+# inclusio DM2.
+#
+#
+dt_INCLUSIONS<-dt_problemes_salut
+
+
+
+#
+#[idp,cod,dat]
+# Llanço taula i camp que vull etiquetar i cambia nom del camp en funció d'etiqueta
+
+#dt_INCLUSIONS
+
+# ull , parlem de diabetis tipus 2, per tan el catàleg haurà de portar : agr_DM2 
+dt_index<-crear_data_index(taula=dt_INCLUSIONS,tall= "20091231",agr="agr_DM2",K="DM2")
+dt_index<-dt_index%>%mutate(dindex=ifelse(DG.DM2<=20070101,20070101, DG.DM2))%>%select(idp,dindex) %>% as_tibble()
+
+
+
+```
+
+
+
+```{r agregacio_diagnostics ,include=F}
+# 2.3. Problemes de salut ------------
+# PROBLEMES SE DALUT!
+
+#SQZ              :[Ezquizofrenia]
+#ALT_PSIC         :[Altres transtorsn psicòtics]
+#BIPOL            :[Transtorn Bipolar]
+#DEP_REC          :[Depressió recurrent i/o altres criteris de gravetat]
+
+
+dt_TMS<-dt_problemes_salut %>% select(idp ,dat,cod)
+
+
+dtagr_dt_TMS<-agregar_problemes(select(dt_TMS,idp,cod,dat),
+                                           bd.dindex = dt_index,
+                                           dt.agregadors=select(dt_cataleg,cod,agr=agr_TMS),
+                                           finestra.dies=c(-Inf,0),prefix = "DG.")%>%
+                                               select(idp ,dtindex,DG.TMS)%>% as_tibble()
+
+#dtagr_dt_TMS
+# Si a la dtindex a l'edat <65 i pren Farmacs antipsicòtics, sense demència també TINDRÀ dt_TMS!!!!
+# més PROBLEMES DE SALUT!!!
+
+
+```
+
+
+```{r agregacio_facturacions, include=F}
+
+# 2.4. agregacio facturacio ------------
+
+
+dt_facturacions<-dt_facturacions%>% as_tibble()
+
+#dt_facturacio<-readRDS(here::here(directori_dades_origen,"epiPEUCAT_entregable_farmacs_facturats_20200206_104913.rds")) %>% as_tibble()
+#dtagr_facturacio<-dt_facturacio %>% transmute(idp,cod,dat,env)
+#rm(dt_facturacio)
+#memory.size(max=T)
+#memory.limit(size=4095)
+gc()
+
+# 
+# dtagr_prescrip_DIABET
+#min(dtagr_prescrip_DIABET$ data_index)
+
+# Facturació pendent de CODIS / AGREGADORS 
+#LLEGIR.farmacs_facturat<-LLEGIR.farmacs_facturat %>% transmute(idp,cod,dat,env)
+#
+#dtagr_facturat_DIABET<-agregar_facturacio(
+#  dt=LLEGIR.farmacs_facturat,
+#  bd.dindex="20181231",
+#  finestra.dies=c(-Inf,0),
+#  dt.agregadors=select(cataleg_antidiab,cod,agr),
+#  prefix="FF.",
+#  camp_agregador="agr",
+#  agregar_data=T) %>% 
+#  transmute(idp,data_index=data.to.string(FF.AD) %>% as.numeric())
+
+
+
+
+```
+
+
+
+```{r agregacio_prescripcions, include=F}
+
+# 2.5. agregacio prescripcions ------------
+
+
+dt_prescripcions<-dt_prescripcions%>% as_tibble()
+
+
+#dtagr_prescrip_DIABET<-agregar_prescripcions(
+#  dt=LLEGIR.farmacs_prescrits,
+#  dt.agregadors=select(cataleg_antidiab,cod,agr),
+#  prefix="FP.",
+#  bd.dindex=20181231,
+#  finestra.dies=c(-Inf,0),
+#  camp_agregador="agr",
+#  agregar_data=T) %>% 
+#  transmute(idp,data_index=data.to.string(FP.AD) %>% as.numeric())
+
+
+gc()
+
+
+```
+
+
+
+```{r agregacio_variables, include=F}
+
+
+# 2.6. agregacio Analitiques+ Cliniques ------------
+
+####################
+#dt_exploracions
+#dt_variables
+#####################
+
+#dtagr_variables<-agregar_analitiques(dt=dt_variables,bd.dindex=dt_index,finestra.dies = c(-365,0))
+
+
+#rm(dt_variables)
+#gc()
+
+```
+
+
+
+## 3  :Fusionar part dels arxius agregats 
+```{r fusio1}
+
+
+
+
+
+#dt_plana<-dt_index%>%
+#left_join(dt_poblacio,by="idp")%>%
+# left_join(dtagr_INCLUSIONS_2018_EPIPEU_AP_HOSP,by=c('idp','dtindex'))%>%
+#  left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP1a,by=c('idp','dtindex') )%>%
+#   left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP1b,by=c('idp','dtindex'))%>%
+#    left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP1c,by=c('idp','dtindex'))%>%
+#     left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP1d,by=c('idp','dtindex'))%>%
+#      left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP2,by=c('idp','dtindex'))%>%
+#       left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP2b,by=c('idp','dtindex'))%>%
+#        left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP3,by=c('idp','dtindex'))%>% 
+#         left_join(dtagr_problemes_2018_EPIPEU_AP_HOSP4,by=c('idp','dtindex'))
+
+  
+
+
+
+```
+
+##  4.exclusions
+```{r exclusions, include=F}
+# 4.exclusions ------------
+# mostra N=10000
+
+# uLL!! A dtindex , l'edat ha de tenir >18 anys!
+
+
+
+
+```
+
+
+
+## 5. Salvar part1 
+```{r SALVAR}
+#saveRDS(dt_plana, file=here::here(params$dir_dades_desti,"dt_plana_TMS_DM2.rds"))
+
+```
+
