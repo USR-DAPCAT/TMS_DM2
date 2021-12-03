@@ -1,0 +1,641 @@
+---
+title: Mortalitat, grau de control i evolucio de la diabetis mellitus tipus 2  en pacients amb  Trastorn Mental Sever (TMS)
+author: "Jordi Real"
+website: "https://github.com/USR-DAPCAT/"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    toc: true
+    toc_float: true
+    fig_caption: true
+    css: logos_css/usr_styles.css
+      
+
+editor_options: 
+  markdown: 
+    wrap: 72
+    
+    
+params:
+  dir_dades_origen: "dades" #"dades/mostra"
+
+---
+
+
+```{=html}
+<script>
+   $(document).ready(function() {
+     $head = $('#header');
+     $head.prepend('<img src=\"https://www.idiapjgol.org/images/logo.png\" style=\"float: right ;width: 130px;\"/>')
+     $head.prepend('<img src=\"https://avatars2.githubusercontent.com/u/57066591?s=200&v=4\" style=\"text-align: center;margin:auto;width: 80px;\"/>')
+   });
+</script>
+```
+
+::: {.watermark}
+DRAFT
+:::
+
+------------------------------------------------------------------------
+
+# Estat
+
+**Realizat**
+
+> Desembre 2021
+
+✓ Canviar periode de reclutament (Durant any 2009) <br/>
+✓ Construcció de grupTMS sense solapaments en funció de priorització <br/>
+✓ Analisis estratificats <br/>
+✓ Models de Cox <br/>
+✓ Corves d'incidencia <br/>
+
+> Novembre 2021
+
+✓ Nous filtres: Criteris d'exclusió DM1 i altres DM <br/>
+✓ Depuració: Rangs de valors vàlids  <br/>
+✓ Recodes: Grups d'edat <br/>
+✓ Arreglar variable tabaquisme <br/>
+
+> Setembre 2021
+
+✓ Lectura de fitxers <br/>
+
+✓ Generació de data index  <br/> 
+✓ Agregació de variables <br/> 
+✓ Generació de 139 Variables  <br/>
+✓ Transformacions de variables <br/>
+✓ Estudi exploratori de variables <br/>
+
+
+**Pendent**
+
+-   Revisió i depuració d'errors
+-   + càlculs de variables
+-   Anàlisi de dades definitiu
+-   Redacció d'article
+
+# Objectius
+
+- 1.1.	Estimar la mortalitat a curt-mitjà termini entre 5 i 8 anys dels pacients diabètics tipus 2 amb trastorn mental sever (TMS) en comparació amb pacients diabètics sense TMS. 
+- 1.2.	Avaluar si existeixen diferències entre grups (TMS vs no TMS) en el grau de control de la diabetis tipus 2 en relació a:
+  - 1.2.1. Seguiment de paràmetres físics i bioquímics: nombre de determinacions i en el seu valor durant el seguiment 
+  - 1.2.2. Determinar si existeixen diferències en quant al nombre de cribratges realitzats durant el seguiment.  
+  
+  - 1.2.3. Determinar si existeixen diferències pel que fa al percentatge de pacients amb tractament farmacològic prescrit i per  tipus de prescripció que realitzen els professionals.
+
+
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE)
+link_source<-paste0("https://github.com/jrealgatius/Stat_codis/blob/master/funcions_propies.R","?raw=T")
+devtools::source_url(link_source)
+
+library(dplyr)
+
+conductor<-here::here("conductor_variables.xls")
+
+
+```
+
+```{r lectura, message=FALSE, echo=FALSE}
+# fitxer_dades<-"exportacionCRD2020(29498)_10.09.xlsx"
+
+dades<-readRDS(here::here(params$dir_dades_origen,"dades.Rds"))
+
+
+```
+
+
+# Transformacions de dades
+
+
+```{r edat}
+
+library(lubridate)
+
+edat_funcio<-function(dtindex,ANY_NAIX) {
+  temp<-ymd(dtindex)-ymd(paste0(as.character(ANY_NAIX),"06","30"))
+  as.numeric(temp)/365.25}
+
+dades<-dades %>% mutate(age=edat_funcio(dtindex,ANY_NAIX)) 
+
+dades<-dades %>% mutate(year_index=year(ymd(dtindex))) 
+
+dades<-dades %>% mutate(year_index=as.character(year_index))
+
+dades<-dades %>% mutate(year_index=if_else(year_index=="2010","2009",year_index)) 
+
+
+```
+
+
+
+```{r recodes, message=FALSE, echo=FALSE}
+
+# Diagnostics
+dades<-dades %>% mutate_at(vars(starts_with("DG.")),~if_else(!is.na(.),1,0))
+
+# Farmac prescrits
+dades<-dades %>% mutate_at(vars(starts_with("FP.")),~if_else(.>0,1,0,missing = 0))
+
+# Farmacs dispensats
+dades<-dades %>% mutate_at(vars(starts_with("FD.")),~if_else(.>0,1,0,missing = 0))
+
+
+
+```
+
+
+Aquells pacients ≤65 anys que tinguin prescrit tractament antipsicòtic (codis ATC: N05AA, N05AB, N05AC, N05AD, N05AE, N05AF, N05AG, N05AH, N05AL, N05AN, N05AX i les seves subcategories) en **data d'inclusio** sense cap diagnòstic del grup de TMS ni de demències seran considerats dins del grup de TMS
+
+
+```{r recode_TMS}
+
+dades<-dades %>% 
+    mutate(DG.TMS=if_else(age<65 & (FD.APSI>0 | FP.APSI>0) & DG.DEMENCIA==0,1,DG.TMS),
+           DG.ANTPSICO_TMS=if_else(age<65 & (FD.APSI>0 | FP.APSI>0) & DG.DEMENCIA==0,1,0)) 
+
+
+# Num de TMS
+vars_TMS<-c("DG.SQZ","DG.BIPOL","DG.DEP_REC","DG.ALT_PSIC","DG.ANTPSICO_TMS")
+dades<-dades %>% comptar_valors(vars_TMS,valor = "1") %>% rename(N_TMS=num_valors) 
+
+
+
+
+```
+
+
+
+```{r factoritzoYesNo}
+
+vars<-extreure.variables("factorSINO",conductor)
+
+dades<-dades %>% mutate_at(vars,~ifelse(.==1,"Yes","No"))
+
+
+```
+
+
+Priorització de TMS en base a combinacions de diagnostics TMS
+
+
+```{r PrioritzacioTMS}
+vars_TMS<-extreure.variables("TMS",conductor)
+
+dt_temp<-dades %>% filter(DG.TMS=="Yes") 
+# Descriptiva
+descrTable(formula.text("TMS","",taulavariables=conductor),
+           data=dt_temp,method = 3,show.all = T,show.p.overall = F,hide = "No",extra.labels = c("","","")) %>%
+  export2md()
+
+# Descriptiva de totes les possibles combiacions de TMS
+dt_temp<-
+  dades %>% filter(N_TMS>1) %>% 
+  select(DG.TMS,N_TMS,extreure.variables("TMS",conductor)) %>% 
+  tidyr::unite(ES_BI_AL_DEP_ANTI,extreure.variables("TMS",conductor),sep="_") %>% arrange(desc(ES_BI_AL_DEP_ANTI))
+
+descrTable(~N_TMS,data=dt_temp,max.xlev = 20, method = 3, Q1=0,Q3=1,extra.labels = c("","","")) %>% 
+  export2md(caption = "Summary descriptives table of number of TMS diagnostics")
+
+descrTable(dt_temp,max.xlev = 50, method = 3, Q1=0,Q3=1,extra.labels = c("","","")) %>% 
+  export2md()
+
+
+# Generar TMS excloents segons criteris prioritaris
+
+# Ull no estan totes les combinacions (només les de la Base de dades)
+combi_TMS <- read_conductor(conductor,sheet="solapaments_TMS") %>% 
+  tidyr::unite(ES_BI_AL_DEP_ANTI,vars_TMS,sep="_") %>% 
+  tidyr::unite(ES_BI_AL_DEP_nou,paste0(vars_TMS,2),sep="_") %>% 
+  tidyr::separate(ES_BI_AL_DEP_nou,vars_TMS,sep="_") %>% 
+  select(ES_BI_AL_DEP_ANTI,vars_TMS,Grup)
+
+# Unir a dades solapaments arreglats de diagnostics
+dades<-dades %>% 
+  tidyr::unite(ES_BI_AL_DEP_ANTI,vars_TMS,sep="_") %>% 
+  left_join(combi_TMS,by = "ES_BI_AL_DEP_ANTI")
+
+# Descriptiva de combiacions de TMS
+dt_temp<-
+  dades %>% filter(N_TMS>1) %>% 
+  select(DG.TMS,N_TMS,extreure.variables("TMS",conductor),"Grup") %>% 
+  tidyr::unite(ES_BI_AL_DEP_ANTI,extreure.variables("TMS",conductor),sep="_")
+ 
+descrTable(dt_temp,max.xlev = 50, method = 3, Q1=0,Q3=1,extra.labels = c("","","")) %>% 
+  export2md()
+
+# 
+# dt_temp %>% filter(ES_BI_AL_DEP_ANTI=="NA_NA_NA_NA_NA") 
+
+dades<-dades %>% mutate(Grup=if_else(is.na(Grup),"Control",Grup))
+
+
+
+
+```
+
+Exploracions: 
+
+De moment codifico com a Baseline : 1 any previ i seguiment
+
+```{r}
+
+
+dades<-dades %>% mutate_at(vars(ends_with(".basal")),~if_else(.>0,1,0,missing = 0))
+
+dades<-dades %>% mutate_at(vars(ends_with(".FU")),~if_else(.>0,.,0,missing = 0))
+
+
+```
+
+
+
+
+```{r}
+# Temps de seguiment 
+calcula_temps_interval<-function(x=DATA_SIT,y=dtindex) 
+  {round((as.numeric((ymd(x)-ymd(y))))/365.25,3)}
+
+dades<-dades %>% mutate(temps_FU=calcula_temps_interval(DATA_SIT,dtindex))
+
+
+
+
+```
+
+
+
+```{r recodes_automatics, include=FALSE}
+
+dades<-dades %>% recodificar2(taulavariables = conductor,criteris="recode",prefix = "grup",sheet="recodes")
+
+dades<-dades %>% recodificar2(taulavariables = conductor,criteris="recode2",prefix = "grup2",sheet="recodes")
+
+dades<-dades %>% etiquetar_valors(conductor,fulla="labels",camp_etiqueta = "etiqueta",new_vars = F)
+
+dades<-dades %>% recode_to_missings(taulavariables = conductor,rang="rang_valid")
+
+dades<-dades %>% refcat(conductor = conductor,ref = "refcat")
+
+# Etiquetar valors
+dades<-dades %>% etiquetar(conductor)
+
+
+```
+
+
+```{r filtres_inicials}
+
+
+## Difunts/ data de baixa anterior a data d'inclusió
+dades<-dades %>% filter(DATA_SIT>dtindex)
+
+## No pot tenir altres tipus de DM 
+dades<- dades %>% filter (!(DG.DM1=="Yes" | DG.DMALT=="Yes")) 
+
+
+```
+
+
+
+# Exploratori
+
+```{r Exploratori}
+library(table1)
+
+formu<-formula.text("baseline","DG.TMS",taulavariables = conductor)
+descrTable(formu,dades,method = 2, Q1=0,Q3=1,extra.labels = c("","",""),show.all = T,show.p.overall = F,include.miss = T,hide = "No") %>% export2md()
+
+formu<-formula_table1("baseline","DG.TMS",taulavariables = conductor)
+formu %>% table1::table1(data=dades)
+
+```
+
+## Distribució per tipus de TMS
+
+```{r}
+
+vars_TMS<-c("DG.TMS","DG.SQZ","DG.BIPOL","DG.DEP_REC","DG.ALT_PSIC")
+
+dades %>% filter(DG.TMS=="Yes") %>% 
+  summarise_at(vars_TMS,~sum(.=="Yes")) %>% 
+  pivot_longer(cols = starts_with("DG."),names_to = "Diagnostic") %>% 
+  kable() %>% kableExtra::kable_classic_2()
+
+table1::table1(~Grup+DG.SQZ + DG.BIPOL + DG.DEP_REC + DG.ALT_PSIC ,
+               data=dades %>% filter(DG.TMS=="Yes"),caption="Analisis exploratori")
+
+
+
+```
+
+
+```{r Exploratori_vistes}
+
+formu<-formula.text("visites","DG.TMS",taulavariables = conductor)
+descrTable(formu,dades,method = 2, Q1=0,Q3=1,extra.labels = c("","",""),show.all = T,show.p.overall = F) %>% export2md()
+
+# pp rana
+dt_temp<-dades %>% mutate_at(extreure.variables("visites",conductor),~ifelse(.==0,NA,.))
+formu<-formula_table1("visites","DG.TMS",taulavariables = conductor)
+table1::table1(formu,data=dt_temp,caption="Analisis exploratori")
+
+
+```
+
+## Estimació de la taxa de mortalitat global i per grups
+
+1.1.	Estimar la mortalitat a curt-mitjà termini entre 5 i 8 anys dels pacients diabètics tipus 2 amb trastorn mental sever (TMS) en comparació amb pacients diabètics sense TMS. 
+
+
+```{r}
+
+Resum_taxa_incidencia<-function(dt=dades,evento="event_tbc",temps="anys_lliure_tbc",valorevent="1",...) {
+  
+  Patients=length(dt[[evento]])
+  PYears=sum(dt[[temps]])
+  N.Events=sum(dt[[evento]]==valorevent)
+  Years_FU_min=min(dt[[temps]])
+  Years_FU_max=max(dt[[temps]])
+  IA=(N.Events/Patients)*100
+  
+  
+  pp<-epiR::epi.conf(as.matrix(cbind(N.Events,PYears)),ctype = "inc.rate",method = "exact",N = 1000, design = 1,...)*100
+  cbind(Patients,PYears,N.Events,"Rate x 100"=pp$est,IC95_Linf=pp$lower,IC95_Lsup=pp$upper,
+        "Cumulative Incidence(%)"=IA,
+        "follow-up in years(Min)"=Years_FU_min,"follow-up in years(Max)"=Years_FU_max)%>% as_tibble()
+  }
+
+
+
+```
+
+
+
+
+```{r}
+# Calcul de taxes d'incidencia
+dt_temp1<-dades %>% 
+  Resum_taxa_incidencia(evento = "SITUACIO",temps="temps_FU",valorevent="D") %>% mutate(`Grup TMS`="Overall")
+
+dt_temp2 <- dades %>% 
+  split(.$DG.TMS) %>% 
+  map_df(~Resum_taxa_incidencia(.x,evento = "SITUACIO",temps="temps_FU",valorevent="D"),.id="Grup TMS")
+
+
+dt_temp2 %>% bind_rows(dt_temp1) %>% kable(caption = "Descriptiu de taxes de mortalitat",digits = 3) %>% kableExtra::kable_classic_2()
+
+
+
+dt_temp<-dades %>% mutate(Surv=survival::Surv(temps_FU,SITUACIO=="D"))
+
+descrTable(Surv ~ DG.TMS + Grup ,data=dt_temp,byrow = T,show.ratio = T) %>% export2md(caption = "Descriptiva de mortalitat")
+```
+
+## Estimació de la taxa de mortalitat global i per grups estratificat per grups d'edat i sexe
+
+```{r}
+
+# Calcul de taxes d'incidencia
+dades %>% mutate(DG.TMS=paste0("TSM:",DG.TMS, "; Sex: ",SEXE)) %>% 
+  split(.$DG.TMS) %>% 
+  map_df(~Resum_taxa_incidencia(.x,evento = "SITUACIO",temps="temps_FU",valorevent="D"),.id="Grup") %>% 
+  kable(caption = "Descriptiu de taxes de mortalitat per sexe",digits = 3) %>% kableExtra::kable_classic_2()
+
+
+dades %>% mutate(DG.TMS=paste0("TSM:",DG.TMS, "; Age: ",age.grup2)) %>% 
+  split(.$DG.TMS) %>% 
+  map_df(~Resum_taxa_incidencia(.x,evento = "SITUACIO",temps="temps_FU",valorevent="D"),.id="Grup") %>% 
+  kable(caption = "Descriptiu de taxes de mortalitat per grups d'edat",digits = 3) %>% kableExtra::kable_classic_2()
+
+
+
+descrTable(Surv ~ DG.TMS + Grup ,data=dt_temp,byrow = T,show.ratio = T) %>% strataTable("SEXE") %>% 
+  export2md(caption = "Descriptiva de mortalitat estratificat per sexe")
+
+
+descrTable(Surv ~ DG.TMS + Grup ,data=dt_temp,byrow = T,show.ratio = T) %>% strataTable("age.grup2") %>% 
+  export2md(caption = "Descriptiva de mortalitat estratificat per edat")
+
+
+
+```
+
+## Estimació de HR's ajustats (Per edad + Sexe + MEDEA )
+
+
+```{r}
+dt_temp<-dades
+
+
+formulaCOX(x="ajust1",event="SITUACIO",temps="temps_FU",taulavariables = conductor,codievent='D', a="DG.TMS") %>%  
+  coxph(dt_temp) %>%  
+  etiquetar_model(taulavariables = conductor) %>%
+  sjPlot::tab_model(prefix.labels = "label",title="Estimació de HR segons Model de Cox ajustat (M1)")
+
+
+formulaCOX(x="ajust2",event="SITUACIO",temps="temps_FU",taulavariables = conductor,codievent='D', a="DG.TMS") %>%  
+  coxph(dt_temp) %>%  
+  etiquetar_model(taulavariables = conductor) %>%
+  sjPlot::tab_model(prefix.labels = "label",title="Estimació de HR segons Model de Cox ajustat (M2)")
+
+
+formulaCOX(x="ajust3",event="SITUACIO",temps="temps_FU",taulavariables = conductor,codievent='D', a="DG.TMS") %>%  
+  coxph(dt_temp) %>%  
+  etiquetar_model(taulavariables = conductor) %>%
+  sjPlot::tab_model(prefix.labels = "label",title="Estimació de HR segons Model de Cox ajustat (M3)")
+
+
+
+```
+
+
+```{r, eval=FALSE}
+
+
+formulaCOX(x="ajust1",event="SITUACIO",temps="temps_FU",taulavariables = conductor,codievent='D', a="Grup") %>%  
+  coxph(dt_temp) %>%  
+  etiquetar_model(taulavariables = conductor) %>%
+  sjPlot::tab_model(prefix.labels = "label",title="Estimació de HR segons Model de Cox ajustat")
+
+
+```
+
+
+```{r, eval=T}
+
+# Estimación de Associación de RD vs Parkinson en distintos escenarios
+Extreure_HR_dif_ajustos<-function(dt=dades,ajust="ajust3") {
+  # dt=dades %>% filter(temps_DM2.cat6=="(-Inf,5]")
+  # ajust="ajust3"
+  # Eliminar variables d'ajust sense casos
+  vars_ajust<-extreure.variables(ajust,taulavariables = conductor) 
+  
+  N_dades<-dt %>% count() %>% pull(n)
+  
+  # Eliminar de variables d'ajust aquelles que no tenen sentit com a mínim 2 categories només de les categoriques excloent RD
+  vars_ajust_cat<-dt %>% select(vars_ajust) %>% select_if(~is.character(.) | is.factor(.)) %>% names()
+  
+  for (i in 1:length(vars_ajust_cat)) {
+    # i=4
+    var_aval=vars_ajust_cat[i]
+    if ((dt %>% distinct(!!sym(var_aval)) %>% dim())[1]==1) {
+      vars_ajust<-vars_ajust[vars_ajust!=var_aval]}
+    }
+  
+  text_model<-vars_ajust[vars_ajust!="antRD"] %>% 
+    etiquetar_vector(taulavariables=conductor) %>% paste0(collapse = "+")
+  
+  # paste0("Surv(temps_FU, as.integer(SITUACIO == `D`))~", paste0(vars_ajust,collapse = "+")) %>% 
+  #   as.formula() %>% 
+    
+  fit<-formulaCOX(x=ajust,event="SITUACIO",temps="temps_FU",taulavariables = conductor,codievent='D', a="DG.TMS") %>% 
+    coxph(dt)
+
+  fit %>% 
+    parameters::parameters(exp=T) %>% filter(row_number()==1) %>% 
+    as_tibble() %>% 
+    select(Parameter,HR=Coefficient,CI_low,CI_high,p) %>% 
+    mutate(AdjustedBy=text_model,N=N_dades,n_model=fit$n, Ajust=paste0(ajust))
+  }
+
+
+c("ajust1","ajust2","ajust3") %>% 
+  map_df(~Extreure_HR_dif_ajustos(dt_temp,.x)) %>% 
+  kable(digits = 3,caption = "Hazzard Ratios de Mortalitat en pacients amb TMS respecte població control") %>% 
+  kableExtra::kable_classic_2()
+  
+
+
+# Extreure_HR_dif_ajustos(dt_temp,"ajust1")
+
+
+```
+
+
+
+## Curves K-M d'incidencia de mortalitat per grup
+
+```{r}
+
+plot_surv<-function(dt=dades,subtitul="Overall") {
+  fit <- survfit(Surv(temps_FU, SITUACIO=="D") ~ DG.TMS ,data = dt )
+  survminer::ggsurvplot(fit,data=dt,fun="cumhaz",conf.int=T,pval=T,xlim = c(0,7.8),ylim=c(0,0.5),xlab="Time in years")+
+    labs(title = "Plot cumulative Incidence", subtitle = subtitul)}
+
+# Overall 
+plot_surv()
+
+#   Estratificat per sexe 
+dt_temp<-dades %>% split(.$SEXE,drop = T)
+
+map2(
+  dt_temp,
+  paste0("Subgroup: ", names(dt_temp)),
+  ~plot_surv(.x,.y))
+
+
+#   Estratificat per Edat 
+dt_temp<-dades %>% split(.$age.grup2,drop = T)
+
+map2(
+  dt_temp,
+  paste0("Subgroup: ", names(dt_temp)),
+  ~plot_surv(.x,.y))
+
+
+
+```
+
+```{r}
+
+fit <- survfit(Surv(temps_FU, SITUACIO=="D") ~ Grup ,data = dades )
+
+survminer::ggsurvplot(fit,data=dades,fun="cumhaz",conf.int=T,pval=T,xlim = c(0,7.8),ylim=c(0,0.5),xlab="Time in years")
+
+
+```
+
+```{r}
+
+
+
+```
+
+
+## Objectius secundaris
+
+2.2. Determinar si existeixen diferències en quant al nombre de cribratges realitzats durant el seguiment.
+
+- He fet 3 taules: Medianes (Mínims i màxims), mitjanes (SD) + mitjanes ajustades per anys de seguiment
+
+
+```{r}
+
+dt_temp<-dades
+
+formu<-formula.text("cribatges","DG.TMS",taulavariables = conductor)
+descrTable(formu,dt_temp,method = 2, Q1=0,Q3=1,extra.labels = c("","",""),show.all = T,show.p.overall = T) %>%
+  export2md()
+
+formu<-formula.text("cribatges","DG.TMS",taulavariables = conductor)
+descrTable(formu,dt_temp,method = 1, extra.labels = c("","",""),show.all = T,show.p.overall = T) %>% export2md()
+
+# ajusto per temps de seguiment
+dt_temp<-dades %>% mutate_at(vars(ends_with(".FU")),~./temps_FU)
+
+formu<-formula.text("cribatges","DG.TMS",taulavariables = conductor)
+descrTable(formu,dt_temp,method = 1, extra.labels = c("","",""),show.all = T,show.p.overall = T) %>% 
+  export2md(caption="Summary descriptives table by groups of TMS **ajustat per temps de seguiment**")
+
+
+
+```
+
+
+
+```{r save}
+
+
+```
+
+
+
+
+
+
+```{r, include=FALSE}
+
+
+
+```
+
+
+
+
+
+
+
+
+<hr />
+
+<p style="text-align: center;">
+
+A work by $Jordi Real$ </a>
+
+</p>
+
+<p style="text-align: center;">
+
+$Llepali System$ </a>
+
+</p>
+
+<p style="text-align: center;">
+
+<em><https://github.com/USR-DAPCAT/></em>
+
+</p>
